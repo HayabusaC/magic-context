@@ -1724,6 +1724,18 @@ export function createRustModeTransform(
     // back out of the host's own database; hosts that keep no such database supply
     // the draft's model through this seam instead.
     const hostModelFallback = deps.hostModelFallback ?? findLastAssistantModelFromOpenCodeDb;
+    // Where this session's already-applied fold boundary is read from. OpenCode 1
+    // keeps it in its own marker state; a host that folds with its own compaction
+    // row supplies that row through the seam instead of a second local copy.
+    const hostAppliedBoundary =
+        deps.hostAppliedBoundary ??
+        ((sessionId: string) => {
+            const marker = getPersistedCompactionMarkerState(deps.db, sessionId);
+            return {
+                endMessageId: marker?.targetEndMessageId ?? marker?.boundaryMessageId ?? null,
+                ordinal: marker?.boundaryOrdinal ?? null,
+            };
+        });
     const heapHolder = new MagicContextRustHeapHolder();
     const promptSurfaceGuidanceEpochs = deps.promptSurfaceRuntime
         ? createPromptSurfaceGuidanceEpochCache(deps.promptSurfaceRuntime)
@@ -2164,11 +2176,11 @@ export function createRustModeTransform(
         // coverage a previous process already published.
         let persistedBoundaryOrdinal: number | null = null;
         try {
-            const marker = getPersistedCompactionMarkerState(deps.db, sessionId);
-            markerAt = marker?.targetEndMessageId ?? marker?.boundaryMessageId ?? null;
-            persistedBoundaryOrdinal = marker?.boundaryOrdinal ?? null;
+            const applied = hostAppliedBoundary(sessionId);
+            markerAt = applied.endMessageId;
+            persistedBoundaryOrdinal = applied.ordinal;
         } catch {
-            // Diagnostics remain available even when the local state database is unavailable.
+            // Diagnostics remain available even when the boundary cannot be read.
         }
         let appliedAt: number | undefined;
         let emergencyFailClosed = false;

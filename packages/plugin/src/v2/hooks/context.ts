@@ -58,7 +58,7 @@ import {
 import { pushNotification } from "../../shared/rpc-notifications";
 import { MagicContextRpcServer } from "../../shared/rpc-server";
 import { renderUserFacingFailure, userFacingFailureCode } from "../../shared/user-facing-codes";
-import { createV2RustCompactionMarkerStrategy, trimToRecordedBoundary } from "../fold/boundary";
+import { v2HostCompactionBoundary } from "../fold/boundary";
 import { v2CompactionMarkerStrategy } from "../fold/markers";
 import { FoldOwner, foldDigest } from "../fold/owner";
 import { restoreRow } from "../fold/restore";
@@ -768,12 +768,26 @@ export async function registerContext(context: V2Context) {
                 // its own default, so no fallback belongs here.
                 historianMaxOutputTokens: config.historian?.maxTokens,
                 historianTwoPass: config.historian?.two_pass,
-                // TypeScript mode folds on the host's own compaction rows, so its marker
-                // carrier stays inert. Rust mode has no such row to fold on: the module's
-                // materialized boundary is recorded instead and trimmed against below.
-                compactionMarkerStrategy: rustModeModuleClient
-                    ? createV2RustCompactionMarkerStrategy((sessionID) => read(sessionID))
-                    : v2CompactionMarkerStrategy,
+                compactionMarkerStrategy: v2CompactionMarkerStrategy,
+                // Both modes fold on the host's own compaction row: answering the
+                // `compaction` hook makes the host record one, and the host then serves
+                // the conversation from it. That row is the boundary — the module is not
+                // asked to keep a second copy that could disagree with the cut actually
+                // being served.
+                hostAppliedBoundary: (sessionID) => {
+                    const reader = new V2StoreReader(
+                        gaDatabasePath(getDataDir(), process.env.OPENCODE_CHANNEL ?? "latest"),
+                    );
+                    try {
+                        return v2HostCompactionBoundary(
+                            reader.history(sessionID),
+                            read(sessionID),
+                            reader.latestCompaction(sessionID),
+                        );
+                    } finally {
+                        reader.close();
+                    }
+                },
                 transformMode: config.transform_mode,
                 rustModeModuleClient,
                 rustModeProjectRoot: directory,
@@ -822,35 +836,33 @@ export async function registerContext(context: V2Context) {
                         ? (identity.renderedSummary ?? identity.submitted)
                         : (cut.data.summary ?? "");
                     const all = reader.history(draft.sessionID);
-                    // Rust mode restores against the boundary the module itself published and
-                    // keeps that boundary row, because the array handed to the module has to
-                    // begin there — exactly where an OpenCode 1 compaction row would have made
-                    // the host begin it. TypeScript mode restores after its own m0 baseline.
-                    const moduleBoundaryID = rustModeModuleClient
-                        ? (getPersistedCompactionMarkerState(db, draft.sessionID)
-                              ?.boundaryMessageId ?? null)
-                        : null;
-                    const boundaryID =
-                        moduleBoundaryID ??
-                        (
-                            db
-                                .prepare(
-                                    "SELECT cached_m0_last_baseline_end_message_id AS id FROM session_meta WHERE session_id = ?",
-                                )
-                                .get(draft.sessionID) as { id: string | null } | null
-                        )?.id;
-                    const boundaryRow = all.find((row) => row.id === boundaryID);
-                    const boundary =
-                        moduleBoundaryID !== null && boundaryRow
-                            ? boundaryRow.seq - 1
-                            : (boundaryRow?.seq ?? -1);
+                    const boundaryID = (
+                        db
+                            .prepare(
+                                "SELECT cached_m0_last_baseline_end_message_id AS id FROM session_meta WHERE session_id = ?",
+                            )
+                            .get(draft.sessionID) as { id: string | null } | null
+                    )?.id;
+                    const boundary = all.find((row) => row.id === boundaryID)?.seq ?? -1;
                     const present = new Set(draft.messages.map((message) => message.id));
-                    const restored = all
-                        .filter(
-                            (row) =>
-                                row.seq > boundary && row.seq <= cut.seq && !present.has(row.id),
-                        )
-                        .flatMap((row) => restoreRow(row, draft.model));
+                    // TypeScript mode restores the history the host archived, because its
+                    // own m[0] is built here and needs the raw rows behind the cut.
+                    //
+                    // Rust mode must not: the summary in that cut IS the module's m[0],
+                    // supplied by the `compaction` hook, so the rows before it are already
+                    // represented in the bytes about to be served. Restoring them would
+                    // hand the module the whole conversation again on every turn after a
+                    // fold and put the same content on the wire twice.
+                    const restored = rustModeModuleClient
+                        ? []
+                        : all
+                              .filter(
+                                  (row) =>
+                                      row.seq > boundary &&
+                                      row.seq <= cut.seq &&
+                                      !present.has(row.id),
+                              )
+                              .flatMap((row) => restoreRow(row, draft.model));
                     draft.messages.splice(
                         0,
                         draft.messages.length,
@@ -860,17 +872,6 @@ export async function registerContext(context: V2Context) {
                 }
             } finally {
                 reader.close();
-            }
-            // The trim OpenCode 1 gets from its compaction row. Without it a folded
-            // session would hand the module its whole history every turn, which is the
-            // cost the fold exists to remove.
-            if (rustModeModuleClient) {
-                const dropped = trimToRecordedBoundary(db, draft.sessionID, draft.messages);
-                if (dropped > 0)
-                    sessionLog(
-                        draft.sessionID,
-                        `v2 boundary trim: dropped ${dropped} messages before the module boundary`,
-                    );
             }
             const mapped = adaptPayload(draft, admitted);
             await transform({}, mapped);

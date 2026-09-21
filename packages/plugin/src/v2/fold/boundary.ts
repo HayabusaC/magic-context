@@ -1,131 +1,34 @@
-import type { ContextDatabase } from "../../features/magic-context/storage";
-import {
-    getPersistedCompactionMarkerState,
-    type PersistedCompactionMarkerState,
-    setPersistedCompactionMarkerState,
-} from "../../features/magic-context/storage-meta-persisted";
-import type { MarkerUpdateOutcome } from "../../hooks/magic-context/compaction-marker-manager";
 import type { RawMessage } from "../../hooks/magic-context/read-session-raw";
-import type { CompactionMarkerStrategy } from "../../hooks/magic-context/transform-postprocess-phase";
-import { sessionLog } from "../../shared/logger";
-import { v2CompactionMarkerStrategy } from "./markers";
+import type { StoreRow } from "../store-reader";
 
 /**
- * Resolve the boundary the served array starts at, given the module's baseline end.
+ * The boundary Magic Context has already folded this session at, on OpenCode 2.
  *
- * OpenCode 1 answers this question by writing a compaction row: it picks the
- * nearest user message at or before the module's baseline end and serves the
- * conversation from there. OpenCode 2 has no such row, so the same rule is
- * applied here against the same raw projection. Keeping the rule identical is
- * what makes the two hosts hand the module the same array for the same baseline.
+ * There is exactly one of these and the host owns it. When Magic Context answers
+ * the `compaction` hook the host records a real compaction row and serves the
+ * conversation from it, so that row is both the checkpoint `FoldOwner` binds to
+ * and the cut that decides what reaches the module. A second, separately
+ * persisted record would be a copy of it that can disagree with it.
  *
- * Returns null when the baseline end is unknown or no user message precedes it,
- * which is the case a caller must treat as "do not move the boundary".
+ * The row itself carries no raw ordinal — the raw projection skips compaction
+ * rows — so the boundary is reported as the last conversational message at or
+ * before the cut, which is the newest message the fold covers.
+ *
+ * Returns nulls when the session has never folded, which every caller reads as
+ * "no boundary yet" rather than as ordinal zero.
  */
-export function resolveBoundaryUserMessage(
-    messages: readonly RawMessage[],
-    endMessageId: string,
-): RawMessage | null {
-    const end = messages.findIndex((message) => message.id === endMessageId);
-    if (end < 0) return null;
-    for (let index = end; index >= 0; index -= 1) {
-        const candidate = messages[index];
-        if (candidate && candidate.role === "user") return candidate;
+export function v2HostCompactionBoundary(
+    history: readonly StoreRow[],
+    rawProjection: readonly RawMessage[],
+    cut: StoreRow | undefined,
+): { endMessageId: string | null; ordinal: number | null } {
+    if (!cut) return { endMessageId: null, ordinal: null };
+    const covered = new Set(history.filter((row) => row.seq < cut.seq).map((row) => row.id));
+    for (let index = rawProjection.length - 1; index >= 0; index -= 1) {
+        const message = rawProjection[index];
+        if (message && covered.has(message.id)) {
+            return { endMessageId: message.id, ordinal: message.ordinal };
+        }
     }
-    return null;
-}
-
-/**
- * Marker lifecycle for Rust mode on OpenCode 2.
- *
- * On OpenCode 1 the module's materialized boundary becomes a real compaction row
- * in the host's store, and the host is then what trims the array it hands the
- * plugin on the next turn. OpenCode 2 exposes no way to write such a row, so the
- * boundary is recorded here instead, in the same `session_meta` columns the
- * OpenCode 1 marker state already uses, and the trim is applied by the adapter
- * before the array crosses into the module.
- *
- * Only the carrier differs. The advance-only rule and the compare-and-swap on the
- * pending blob are the shared caller's, unchanged: this records a boundary that
- * moved forward and declines one that did not.
- */
-export function createV2RustCompactionMarkerStrategy(
-    readRawMessages: (sessionId: string) => readonly RawMessage[],
-): CompactionMarkerStrategy {
-    return {
-        ...v2CompactionMarkerStrategy,
-        applyDeferred: (db, sessionId, pending): MarkerUpdateOutcome => {
-            const existing = getPersistedCompactionMarkerState(db as ContextDatabase, sessionId);
-            if (existing && existing.boundaryOrdinal >= pending.ordinal) {
-                return { kind: "already-current" };
-            }
-            let boundary: RawMessage | null = null;
-            try {
-                boundary = resolveBoundaryUserMessage(
-                    readRawMessages(sessionId),
-                    pending.endMessageId,
-                );
-            } catch (error) {
-                return {
-                    kind: "retryable-failure",
-                    error: error instanceof Error ? error : new Error(String(error)),
-                };
-            }
-            if (!boundary) {
-                // Same rule as the OpenCode 1 drain: an unresolvable target leaves the
-                // previous boundary in place rather than dropping back to full history.
-                return {
-                    kind: "retryable-failure",
-                    error: new Error(
-                        `no user boundary found at or before endMessageId ${pending.endMessageId} (ordinal ${pending.ordinal}); preserving existing boundary`,
-                    ),
-                };
-            }
-            const state: PersistedCompactionMarkerState = {
-                boundaryMessageId: boundary.id,
-                // OpenCode 2 writes no summary message and no parts for it. The
-                // columns stay in the record so every existing reader keeps its
-                // shape; empty means "this host carries no marker rows".
-                summaryMessageId: "",
-                compactionPartId: "",
-                summaryPartId: "",
-                boundaryOrdinal: pending.ordinal,
-                targetEndMessageId: pending.endMessageId,
-            };
-            setPersistedCompactionMarkerState(db as ContextDatabase, sessionId, state);
-            sessionLog(
-                sessionId,
-                `v2 boundary recorded at ordinal ${pending.ordinal}, boundary message ${boundary.id}`,
-            );
-            return { kind: "applied", markerOrdinal: pending.ordinal };
-        },
-    };
-}
-
-/**
- * Drop everything before the recorded boundary from the array about to be sent.
- *
- * This is the trim OpenCode 1 gets for free from its compaction row. Without it
- * a session that has already folded would hand the module its whole history on
- * every later turn, which is exactly the cost the fold was supposed to remove —
- * most visibly on a cold start, where the module has no state yet and would seed
- * from thousands of messages instead of the tail.
- *
- * Returns the number of messages removed. A boundary that is not in the array is
- * left alone: it either has not been reached yet or belongs to history the host
- * has already dropped, and guessing in either direction would change what the
- * model sees.
- */
-export function trimToRecordedBoundary(
-    db: ContextDatabase,
-    sessionId: string,
-    messages: Array<{ id?: string }>,
-): number {
-    const marker = getPersistedCompactionMarkerState(db, sessionId);
-    const boundaryId = marker?.boundaryMessageId;
-    if (!boundaryId) return 0;
-    const start = messages.findIndex((message) => message.id === boundaryId);
-    if (start <= 0) return 0;
-    messages.splice(0, start);
-    return start;
+    return { endMessageId: null, ordinal: null };
 }

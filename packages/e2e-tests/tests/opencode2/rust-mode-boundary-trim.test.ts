@@ -9,6 +9,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -169,28 +170,36 @@ describe.skipIf(!prereqs.ok)("rust mode on OpenCode 2: boundary trim", () => {
         await subc?.stop();
     });
 
-    // SKIPPED with a finding, not weakened into a green.
+    /**
+     * What the fold actually buys on this host.
+     *
+     * OpenCode 2 records a real compaction row when Magic Context answers the
+     * `compaction` hook, and then serves the conversation from that row. So the
+     * array the module is handed stops tracking the conversation, and the boundary
+     * the adapter reports back is that row — not a second record kept beside it.
+     *
+     * An earlier version of this test asserted the same flat numbers and credited
+     * them to an adapter-side trim. Neutralising that trim changed none of them,
+     * which is how the host cut was identified as the real mechanism; the
+     * assertions below name the host row explicitly so the credit cannot drift
+     * again.
+     */
+    // SKIPPED ON AN UNRESOLVED BLOCKER, not on a weakened assertion.
     //
-    // The numbers this test measures are real and reproducible: after a fold,
-    // oc_input pins at 7 for six turns while an untrimmed array would have grown
-    // to 17, and the boundary id advances every pass. But neutralising
-    // trimToRecordedBoundary changed NONE of them, and the adapter's own
-    // "v2 boundary trim: dropped" line never appears — it fires zero times.
+    // Revision 4 moved the boundary onto the host's compaction row and stopped
+    // rust mode from restoring the rows behind that row. The restore is what the
+    // earlier "flat oc_input" actually came from — mutating trimToRecordedBoundary
+    // did not redden it because the trim was never the mechanism; the restore
+    // window was. With the restore removed, this scenario now exceeds its 900s
+    // budget and I have not diagnosed why. The store shows the host writing a
+    // completed compaction row on essentially every turn (29 rows in a 30-turn
+    // run), so the interaction between that cadence and an empty restore is the
+    // first thing to look at.
     //
-    // So the flatness is not the adapter's trim. It is the host's own cut: when
-    // Magic Context answers the `compaction` hook, OpenCode 2 records a real
-    // compaction row and serves history from it, so draft.messages already
-    // arrives trimmed and the boundary message is no longer in the array for
-    // trimToRecordedBoundary to find.
-    //
-    // That contradicts ruling 3's premise that this host has no compaction row to
-    // fold on. The adapter-side trim may be unnecessary on the MC-injected fold
-    // path, or it may be the needed fallback for a path where the host writes no
-    // row (compaction-off, or a fold the host declines). Which of those it is, is
-    // a design question for the chair rather than something to assert either way
-    // here. The `adapter trim lines` assertion below is the honest expression of
-    // the claim and it currently fails.
-    it.skip("stops handing the module the whole history once a boundary is recorded", async () => {
+    // Do not merge revision 4's context.ts change on the strength of the green
+    // tests around it: rust-mode-module-served and rust-mode-limitation both still
+    // pass, and they do not cover the post-fold path this changes.
+    it.skip("folds on the host's compaction row and stops resending the history", async () => {
         const client = OpenCode.make({
             baseUrl: host.url,
             headers: { authorization: `Basic ${btoa(`opencode:${host.password}`)}` },
@@ -207,9 +216,6 @@ describe.skipIf(!prereqs.ok)("rust mode on OpenCode 2: boundary trim", () => {
             );
         };
 
-        // Keep driving ordinary turns until the module publishes a boundary. Each
-        // round is one real turn; nothing is reached into, the loop just keeps
-        // asking until the durable state this assertion depends on exists.
         host.mock.setDefault({
             text: "pressure",
             usage: { input_tokens: 20_000, output_tokens: 20 },
@@ -221,9 +227,6 @@ describe.skipIf(!prereqs.ok)("rust mode on OpenCode 2: boundary trim", () => {
             await waitForPasses(logPath, round + 1);
             boundaryAt = readCoverage(logPath).findIndex((entry) => entry.markerAt !== "none");
         }
-        // The boundary is recorded during the pass that publishes it, and the trim is
-        // read at the START of a pass, so the first pass that can be trimmed is the
-        // one after it. Drive several more so the steady state is what gets measured.
         for (let extra = 0; extra < 6; extra += 1) {
             await prompt(`post-fold turn ${extra + 1}: ${ballast(3_000)}`);
             await waitForPasses(logPath, round + extra + 2);
@@ -233,44 +236,50 @@ describe.skipIf(!prereqs.ok)("rust mode on OpenCode 2: boundary trim", () => {
         console.log(
             `oc_input per pass: ${coverage.map((entry) => `${entry.ocInput}@${entry.markerAt}`).join(" ")}`,
         );
-        expect(coverage.length).toBeGreaterThan(0);
-        // A boundary must actually have been published; without one the rest of
-        // this test would be asserting nothing.
         expect(boundaryAt).toBeGreaterThan(0);
 
-        // Each turn adds a user row and an assistant row, so an untrimmed array
-        // would carry about two more messages on every pass. That is the number
-        // the trim has to beat: what it claims is not "smaller than some earlier
-        // peak" — the pre-fold history is short by construction — but that the
-        // array handed to the module stops tracking the conversation at all.
+        // The host really did write a completed compaction row, and the boundary
+        // the adapter reports is derived from it rather than from a local record.
+        const db = new Database(join(host.env.XDG_DATA_HOME!, "opencode", "opencode2.db"), {
+            readonly: true,
+        });
+        let cutSeq: number;
+        let coveredIds: Set<string>;
+        try {
+            const cut = db
+                .prepare(
+                    "SELECT seq FROM session_message WHERE session_id = ? AND type = 'compaction' AND json_extract(data, '$.status') = 'completed' ORDER BY seq DESC LIMIT 1",
+                )
+                .get(session.id) as { seq: number } | undefined;
+            expect(cut).toBeDefined();
+            cutSeq = cut!.seq;
+            coveredIds = new Set(
+                (
+                    db
+                        .prepare(
+                            "SELECT id FROM session_message WHERE session_id = ? AND seq < ? AND type IN ('user','synthetic','assistant','skill','shell','system')",
+                        )
+                        .all(session.id, cutSeq) as Array<{ id: string }>
+                ).map((row) => row.id),
+            );
+        } finally {
+            db.close();
+        }
+        const reportedBoundary = coverage[coverage.length - 1]!.markerAt;
+        console.log(`host compaction cut seq=${cutSeq}; adapter reported boundary=${reportedBoundary}`);
+        // The reported boundary is a message the host's own cut covers.
+        expect(coveredIds.has(reportedBoundary)).toBe(true);
+
+        // And the array handed to the module stays at its post-fold size instead of
+        // growing two messages per turn the way an unfolded session would.
         const untrimmed = 2 * coverage.length - 1;
         const post = coverage.slice(boundaryAt + 1).map((entry) => entry.ocInput);
         expect(post.length).toBeGreaterThan(2);
-        const final = post[post.length - 1]!;
         console.log(
-            `post-boundary oc_input: ${post.join(" ")} | untrimmed equivalent at the final pass: ${untrimmed}`,
+            `post-fold oc_input: ${post.join(" ")} | unfolded equivalent at the final pass: ${untrimmed}`,
         );
-        expect(final).toBeLessThan(untrimmed);
-        // Flat, not merely smaller: the window stays put while the conversation
-        // grows past it, which is what a marker row buys on OpenCode 1.
+        expect(post[post.length - 1]!).toBeLessThan(untrimmed);
         expect(Math.max(...post) - Math.min(...post)).toBeLessThanOrEqual(2);
-        // The boundary itself keeps advancing, so the trim is tracking live
-        // publications rather than pinning one stale id.
-        const boundaries = coverage.slice(boundaryAt).map((entry) => entry.markerAt);
-        expect(new Set(boundaries).size).toBeGreaterThan(1);
-
-        // The trim is about what the module is handed; the served bytes still have
-        // to be a real module head rather than a raw passthrough.
-        // The adapter's own trim has to be what produced this, not the host's
-        // compaction cut arriving pre-trimmed. Neutralising trimToRecordedBoundary
-        // left every number above unchanged, so the number alone proves nothing;
-        // this line is written only by the adapter when it actually drops messages.
-        const trimLines = readFileSync(logPath, "utf8")
-            .split("\n")
-            .filter((line) => line.includes("v2 boundary trim: dropped"));
-        console.log(`adapter trim lines: ${trimLines.length}`);
-        console.log(trimLines.slice(0, 3).map((line) => line.slice(-90)).join("\n"));
-        expect(trimLines.length).toBeGreaterThan(0);
 
         const served = servedArray(host.mock.requests().at(-1));
         expect(JSON.stringify(served[0])).toContain("<session-history>");

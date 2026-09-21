@@ -152,7 +152,6 @@ import {
 import {
     abortSessionFailClosed,
     type CompactionMarkerStrategy,
-    clearRustModeBoundaryRecord,
     defaultCompactionMarkerStrategy,
     evaluateEmergencyFailClosed,
     runPostTransformPhase,
@@ -546,6 +545,17 @@ export interface TransformDeps {
     hostProtectedTailBoundary?: typeof resolveOpenCodeProtectedTailBoundary;
     hostModelFallback?: typeof findLastAssistantModelFromOpenCodeDb;
     hostRefuse?: typeof abortSessionFailClosed;
+    /**
+     * The boundary this session has already been folded at, as the host records it.
+     * Omitted on OpenCode 1, which keeps it in its own marker state; a host that
+     * folds with its own compaction row reports that row here instead, so there is
+     * one source of truth rather than a local copy that can disagree with the cut
+     * actually served.
+     */
+    hostAppliedBoundary?: (sessionId: string) => {
+        endMessageId: string | null;
+        ordinal: number | null;
+    };
     tagger: Tagger;
     scheduler: Scheduler;
     contextUsageMap: Map<
@@ -837,7 +847,6 @@ export function createTransform(deps: TransformDeps) {
                     rustModeTransform &&
                     readCoordinateGeneration(db, sessionId) !== deps.storeGeneration
                 ) {
-                    clearRustModeBoundaryRecord(db, sessionId);
                     await rustModeTransform.clearSession(sessionId);
                     sessionLog(
                         sessionId,
