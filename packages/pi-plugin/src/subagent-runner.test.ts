@@ -202,6 +202,7 @@ function buildArgsForTest(
 	return __test.buildArgs(options, {
 		systemPromptPath: TEST_SYSTEM_PROMPT_PATH,
 		historianCalibrationEntryPath: null,
+		subagentUsageEntryPath: null,
 		...opts,
 	});
 }
@@ -1258,6 +1259,21 @@ describe("subagent-runner pure helpers", () => {
 			});
 			expect(args).not.toContain("--magic-context-dreamer-actions");
 		}
+	});
+
+	it("loads usage collection for accounted OMP historian runs without loading ctx_* tools", () => {
+		const args = buildArgsForTest(
+			{ ...baseOptions, agent: "magic-context-historian", accountingSessionId: "session" },
+			{ targetHarness: "omp", subagentEntryPath: "/tmp/subagent-entry.js", subagentUsageEntryPath: "/tmp/subagent-usage-entry.js" },
+		);
+		expect(args).toEqual(expect.arrayContaining(["--no-session", "--extension", "/tmp/subagent-usage-entry.js"]));
+		expect(args).not.toContain("/tmp/subagent-entry.js");
+		const dreamer = buildArgsForTest(
+			{ ...baseOptions, agent: "magic-context-dreamer", accountingSessionId: "session" },
+			{ targetHarness: "omp", subagentEntryPath: "/tmp/subagent-entry.js", subagentUsageEntryPath: "/tmp/subagent-usage-entry.js" },
+		);
+		expect(dreamer).toContain("/tmp/subagent-entry.js");
+		expect(dreamer).not.toContain("/tmp/subagent-usage-entry.js");
 	});
 });
 

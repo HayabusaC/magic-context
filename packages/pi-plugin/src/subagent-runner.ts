@@ -503,6 +503,7 @@ function resolveSiblingEntryPath(fileName: string): string | undefined {
 }
 
 const SUBAGENT_ENTRY_PATH = resolveSiblingEntryPath("subagent-entry.js");
+const SUBAGENT_USAGE_ENTRY_PATH = resolveSiblingEntryPath("subagent-usage-entry.js");
 const HISTORIAN_CALIBRATION_ENTRY_PATH = resolveSiblingEntryPath(
 	"historian-calibration-extension.js",
 );
@@ -2062,6 +2063,7 @@ export function buildArgs(
 		subagentExtensions?: readonly string[];
 		omitPositionalMessage?: boolean;
 		subagentEntryPath?: string;
+		subagentUsageEntryPath?: string | null;
 		systemPromptPath?: string;
 		modelRef?: string;
 		historianCalibrationEntryPath?: string | null;
@@ -2150,6 +2152,20 @@ export function buildArgs(
 		if (DREAMER_ACTION_AGENTS.has(options.agent)) {
 			args.push("--magic-context-dreamer-actions");
 		}
+	}
+	// Historian has no ctx_* tools, but its OMP message_end must still be
+	// captured for invocation usage and the model's pricing snapshot.
+	const usageEntryPath =
+		opts?.subagentUsageEntryPath === undefined
+			? SUBAGENT_USAGE_ENTRY_PATH
+			: opts.subagentUsageEntryPath;
+	if (
+		ompTarget &&
+		options.accountingSessionId &&
+		HISTORIAN_AGENTS.has(options.agent) &&
+		usageEntryPath
+	) {
+		args.push("--extension", usageEntryPath);
 	}
 
 	const historianCalibrationEntryPath =
