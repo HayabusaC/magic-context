@@ -2252,6 +2252,11 @@
           "description": "API key for remote embedding provider (optional)",
           "type": "string"
         },
+        "price_per_million_input_tokens": {
+          "description": "Optional USD price per 1M input tokens for remote embedding. Used only for Magic Context Estimated Cost.",
+          "type": "number",
+          "minimum": 0
+        },
         "input_type": {
           "description": "Default input_type for stored/indexed (passage) embeddings in the request body. Required by some openai-compatible providers (e.g. NVIDIA NIM). Omitted from the request when unset.",
           "type": "string"

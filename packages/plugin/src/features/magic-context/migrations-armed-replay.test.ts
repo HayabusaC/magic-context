@@ -665,6 +665,20 @@ function populateForVersion(db: DatabaseType, version: number, state: ReplayStat
             ).toContain("owner_pid");
             populateModuleOwnedRows(db, version, state);
             return;
+        case 91:
+            if (!state.armed) throw new Error(`migration v${version} reached an unarmed store`);
+            expect(
+                (
+                    db.prepare("PRAGMA table_info(subagent_invocations)").all() as Array<{
+                        name: string;
+                    }>
+                ).map((column) => column.name),
+            ).toContain("pricing_snapshot");
+            expect(
+                db.prepare("SELECT name FROM sqlite_master WHERE name = 'embedding_usage'").get(),
+            ).toBeTruthy();
+            populateModuleOwnedRows(db, version, state);
+            return;
         default:
             throw new Error(`populateForVersion has no arm for migration v${version}`);
     }

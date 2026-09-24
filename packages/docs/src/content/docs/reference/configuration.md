@@ -152,6 +152,7 @@ Durable project memory, semantic search, and recall features. OpenAI-compatible 
 | `embedding.model` | string | — | Embedding model name. Required for openai-compatible, ignored for local. |
 | `embedding.endpoint` | string | — | API endpoint URL. Required when provider is openai-compatible. |
 | `embedding.api_key` | string | — | API key for remote embedding provider (optional) |
+| `embedding.price_per_million_input_tokens` | number (0–) | — | Optional USD price per 1M input tokens for remote embedding. Used only for Magic Context Estimated Cost. |
 | `embedding.input_type` | string | — | Default input_type for stored/indexed (passage) embeddings in the request body. Required by some openai-compatible providers (e.g. NVIDIA NIM). Omitted from the request when unset. |
 | `embedding.query_input_type` | string | — | Optional input_type for query (search) embeddings on asymmetric models (e.g. NVIDIA NIM 'query'). When unset, query embeddings use embedding.input_type. Passage/stored content always uses embedding.input_type. |
 | `embedding.query_instruction` | string \| boolean | — | OpenAI-compatible query prefix override. A string is prepended verbatim to search queries; false disables the built-in model-family instruction. Qwen3-Embedding, gte-Qwen instruct, e5 instruct, and Nomic families have built-in recipes. Query-only changes do not re-embed stored content. User-level only; project values are ignored. |
