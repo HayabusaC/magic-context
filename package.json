@@ -1,0 +1,71 @@
+{
+  "name": "@cortexkit/pi-magic-context",
+  "version": "0.42.6",
+  "type": "module",
+  "description": "Pi and OMP coding agent extension for Magic Context — cross-session memory and context management",
+  "main": "dist/index.js",
+  "license": "MIT",
+  "author": "ualtinok",
+  "keywords": [
+    "pi",
+    "pi-coding-agent",
+    "omp",
+    "oh-my-pi",
+    "extension",
+    "context",
+    "memory",
+    "magic-context",
+    "ai",
+    "llm"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HayabusaC/magic-context"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "dependencies": {
+    "@cortexkit/subc-client": "0.4.1",
+    "@jitl/quickjs-singlefile-cjs-release-asyncify": "0.32.0",
+    "@oh-my-pi/pi-catalog": "18.2.10",
+    "ai-tokenizer": "^1.0.6",
+    "comment-json": "^5.0.0",
+    "onnxruntime-web": "1.26.0-dev.20260416-b7804b056c",
+    "quickjs-emscripten": "^0.32.0",
+    "typebox": "^1.3.1",
+    "zod": "^4.1.8"
+  },
+  "optionalDependencies": {
+    "onnxruntime-node": "1.30.0",
+    "sharp": "^0.35.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.80.2",
+    "@earendil-works/pi-tui": ">=0.80.2"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    }
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js"
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "omp": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  }
+}
