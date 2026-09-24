@@ -503,7 +503,9 @@ function resolveSiblingEntryPath(fileName: string): string | undefined {
 }
 
 const SUBAGENT_ENTRY_PATH = resolveSiblingEntryPath("subagent-entry.js");
-const SUBAGENT_USAGE_ENTRY_PATH = resolveSiblingEntryPath("subagent-usage-entry.js");
+const SUBAGENT_USAGE_ENTRY_PATH = resolveSiblingEntryPath(
+	"subagent-usage-entry.js",
+);
 const HISTORIAN_CALIBRATION_ENTRY_PATH = resolveSiblingEntryPath(
 	"historian-calibration-extension.js",
 );

@@ -1263,14 +1263,36 @@ describe("subagent-runner pure helpers", () => {
 
 	it("loads usage collection for accounted OMP historian runs without loading ctx_* tools", () => {
 		const args = buildArgsForTest(
-			{ ...baseOptions, agent: "magic-context-historian", accountingSessionId: "session" },
-			{ targetHarness: "omp", subagentEntryPath: "/tmp/subagent-entry.js", subagentUsageEntryPath: "/tmp/subagent-usage-entry.js" },
+			{
+				...baseOptions,
+				agent: "magic-context-historian",
+				accountingSessionId: "session",
+			},
+			{
+				targetHarness: "omp",
+				subagentEntryPath: "/tmp/subagent-entry.js",
+				subagentUsageEntryPath: "/tmp/subagent-usage-entry.js",
+			},
 		);
-		expect(args).toEqual(expect.arrayContaining(["--no-session", "--extension", "/tmp/subagent-usage-entry.js"]));
+		expect(args).toEqual(
+			expect.arrayContaining([
+				"--no-session",
+				"--extension",
+				"/tmp/subagent-usage-entry.js",
+			]),
+		);
 		expect(args).not.toContain("/tmp/subagent-entry.js");
 		const dreamer = buildArgsForTest(
-			{ ...baseOptions, agent: "magic-context-dreamer", accountingSessionId: "session" },
-			{ targetHarness: "omp", subagentEntryPath: "/tmp/subagent-entry.js", subagentUsageEntryPath: "/tmp/subagent-usage-entry.js" },
+			{
+				...baseOptions,
+				agent: "magic-context-dreamer",
+				accountingSessionId: "session",
+			},
+			{
+				targetHarness: "omp",
+				subagentEntryPath: "/tmp/subagent-entry.js",
+				subagentUsageEntryPath: "/tmp/subagent-usage-entry.js",
+			},
 		);
 		expect(dreamer).toContain("/tmp/subagent-entry.js");
 		expect(dreamer).not.toContain("/tmp/subagent-usage-entry.js");

@@ -14,17 +14,46 @@ it("writes an OMP message_end usage snapshot without registering tools", () => {
 	try {
 		const listeners = new Map<string, (event: unknown, ctx: unknown) => void>();
 		const api = {
-			on: (name: string, listener: (event: unknown, ctx: unknown) => void) => listeners.set(name, listener),
-			registerTool: () => { throw new Error("usage entry must not register tools"); },
+			on: (name: string, listener: (event: unknown, ctx: unknown) => void) =>
+				listeners.set(name, listener),
+			registerTool: () => {
+				throw new Error("usage entry must not register tools");
+			},
 		} as unknown as ExtensionAPI;
 		subagentUsageExtension(api);
 		expect([...listeners.keys()]).toEqual(["message_end"]);
 		listeners.get("message_end")?.(
-			{ message: { role: "assistant", provider: "example", model: "model", usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 12 } } },
-			{ modelRegistry: { getAvailable: () => [{ provider: "example", id: "model", cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } }] } },
+			{
+				message: {
+					role: "assistant",
+					provider: "example",
+					model: "model",
+					usage: {
+						input: 10,
+						output: 2,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 12,
+					},
+				},
+			},
+			{
+				modelRegistry: {
+					getAvailable: () => [
+						{
+							provider: "example",
+							id: "model",
+							cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+						},
+					],
+				},
+			},
 		);
 		expect(existsSync(path)).toBe(true);
-		const snapshot = JSON.parse(readFileSync(path, "utf8").trim()) as { estimatedCost: number; usage: { input: number } };
+		const snapshot = JSON.parse(readFileSync(path, "utf8").trim()) as {
+			estimatedCost: number;
+			usage: { input: number };
+		};
 		expect(snapshot.usage.input).toBe(10);
 		expect(snapshot.estimatedCost).toBeGreaterThan(0);
 	} finally {
