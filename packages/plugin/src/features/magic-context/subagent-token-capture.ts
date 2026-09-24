@@ -31,6 +31,11 @@ export interface ChildInvocationRecordInput {
     task?: string | null;
     messages?: unknown[];
     tokens?: TokenTotals;
+    usageSnapshots?: Array<{
+        usage: TokenTotals & { totalTokens: number; reasoningTokens?: number };
+    }>;
+    pricingSnapshot?: unknown | null;
+    estimatedCost?: number | null;
     providerId?: string | null;
     modelId?: string | null;
     error?: unknown;
@@ -132,7 +137,37 @@ export function recordChildInvocation(input: ChildInvocationRecordInput): number
     // null on the schema fence), silently skip recording rather than crash the
     // subagent that was only trying to log its token usage.
     if (!input.db) return null;
-    const tokens = input.tokens ?? sumTokensFromChildMessages(input.messages ?? []);
+    const tokens =
+        input.tokens ??
+        (input.usageSnapshots?.length
+            ? input.usageSnapshots.reduce<TokenTotals>(
+                  (sum, entry) => ({
+                      input: sum.input + entry.usage.input,
+                      output: sum.output + entry.usage.output,
+                      cacheRead: sum.cacheRead + entry.usage.cacheRead,
+                      cacheWrite: sum.cacheWrite + entry.usage.cacheWrite,
+                  }),
+                  emptyTokenTotals(),
+              )
+            : sumTokensFromChildMessages(input.messages ?? []));
+    const nativeUsages =
+        input.usageSnapshots?.map((entry) => entry.usage) ??
+        (input.messages ?? [])
+            .filter(isAssistantMessage)
+            .map((message) => message.usage)
+            .filter((usage): usage is Record<string, unknown> =>
+                Boolean(usage && typeof usage === "object"),
+            );
+    const reasoning =
+        nativeUsages.length > 0 &&
+        nativeUsages.every((usage) => typeof usage.reasoningTokens === "number")
+            ? nativeUsages.reduce((sum, usage) => sum + asNumber(usage.reasoningTokens), 0)
+            : null;
+    const total =
+        nativeUsages.length > 0 &&
+        nativeUsages.every((usage) => typeof usage.totalTokens === "number")
+            ? nativeUsages.reduce((sum, usage) => sum + asNumber(usage.totalTokens), 0)
+            : null;
     const model =
         input.providerId !== undefined || input.modelId !== undefined
             ? { providerId: input.providerId ?? null, modelId: input.modelId ?? null }
@@ -152,6 +187,16 @@ export function recordChildInvocation(input: ChildInvocationRecordInput): number
             outputTokens: tokens.output,
             cacheReadTokens: tokens.cacheRead,
             cacheWriteTokens: tokens.cacheWrite,
+            component:
+                input.subagent === "dreamer"
+                    ? "dreamer"
+                    : input.subagent === "historian" || input.subagent === "historian_editor"
+                      ? "historian"
+                      : null,
+            reasoningTokens: reasoning,
+            totalTokens: total,
+            pricingSnapshot: input.pricingSnapshot ?? null,
+            estimatedCost: input.estimatedCost ?? null,
             error: input.error ? describeError(input.error).brief : null,
             parentInvocationId: input.parentInvocationId ?? null,
         });

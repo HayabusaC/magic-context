@@ -3124,6 +3124,31 @@ export const MIGRATIONS: Migration[] = [
             ensureColumn(db, "compartment_state_lease", "owner_pid", "INTEGER");
         },
     },
+    {
+        version: 91,
+        description: "snapshot Magic Context invocation costs and embedding requests",
+        up(db: Database): void {
+            if (tableExists(db, "subagent_invocations")) {
+                ensureColumn(db, "subagent_invocations", "component", "TEXT");
+                ensureColumn(db, "subagent_invocations", "reasoning_tokens", "INTEGER");
+                ensureColumn(db, "subagent_invocations", "total_tokens", "INTEGER");
+                ensureColumn(db, "subagent_invocations", "pricing_snapshot", "TEXT");
+                ensureColumn(db, "subagent_invocations", "estimated_cost", "REAL");
+            }
+            db.exec(`CREATE TABLE IF NOT EXISTS embedding_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp INTEGER NOT NULL,
+                provider_id TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                requests INTEGER NOT NULL DEFAULT 1,
+                input_tokens INTEGER,
+                dimensions INTEGER,
+                price_per_million_input_tokens REAL,
+                estimated_cost REAL
+            );
+            CREATE INDEX IF NOT EXISTS idx_embedding_usage_timestamp ON embedding_usage(timestamp);`);
+        },
+    },
 ];
 
 /**

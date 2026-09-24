@@ -43,6 +43,7 @@
 	"dependencies": {
 		"@cortexkit/subc-client": "0.4.1",
 		"@jitl/quickjs-singlefile-cjs-release-asyncify": "0.32.0",
+		"@oh-my-pi/pi-catalog": "18.2.10",
 		"ai-tokenizer": "^1.0.6",
 		"comment-json": "^5.0.0",
 		"onnxruntime-web": "1.26.0-dev.20260416-b7804b056c",

@@ -93,6 +93,9 @@ function resolveEmbeddingConfig(config?: EmbeddingConfig): EmbeddingConfig {
                 ? { document_prefix: config.document_prefix }
                 : {}),
             ...(truncate ? { truncate } : {}),
+            ...(config.price_per_million_input_tokens !== undefined
+                ? { price_per_million_input_tokens: config.price_per_million_input_tokens }
+                : {}),
             ...(config.max_input_tokens
                 ? {
                       max_input_tokens: normalizeCompartmentChunkMaxInputTokens(
@@ -145,6 +148,7 @@ function createProvider(config: EmbeddingConfig): EmbeddingProvider | null {
             documentPrefix: config.document_prefix,
             truncate: config.truncate,
             maxInputTokens: config.max_input_tokens,
+            pricePerMillionInputTokens: config.price_per_million_input_tokens,
         });
     }
 

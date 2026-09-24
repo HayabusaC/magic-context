@@ -1,4 +1,5 @@
 import * as childProcess from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
 	existsSync,
 	mkdtempSync,
@@ -42,6 +43,10 @@ import type {
 } from "@magic-context/core/shared/subagent-runner";
 import { summarizeChildStderr } from "@magic-context/core/shared/summarize-child-stderr";
 import { type PiHarnessKind, resolvePiHarnessKind } from "./pi-harness-kind";
+import {
+	consumeUsagePricingSnapshots,
+	SUBAGENT_USAGE_SNAPSHOT_ENV,
+} from "./subagent-usage-pricing";
 
 const PI_CODING_AGENT_MODULE = "@earendil-works/pi-coding-agent";
 const PI_CODING_AGENT_PACKAGE_NAMES = new Set([
@@ -1092,6 +1097,10 @@ export class PiSubagentRunner implements SubagentRunner {
 		modelRefOverride?: string,
 	): Promise<SubagentRunResult> {
 		const startTime = Date.now();
+		const usageSnapshotPath = join(
+			tmpdir(),
+			`magic-context-usage-${randomUUID()}.jsonl`,
+		);
 		let recordedAccounting = false;
 		const recordAccounting = (
 			result: SubagentRunResult,
@@ -1099,6 +1108,16 @@ export class PiSubagentRunner implements SubagentRunner {
 		) => {
 			if (!options.accountingSessionId || recordedAccounting) return;
 			recordedAccounting = true;
+			const snapshots =
+				this.harness === "omp"
+					? consumeUsagePricingSnapshots(usageSnapshotPath)
+					: [];
+			const fullyPriced =
+				snapshots.length > 0 &&
+				snapshots.every(
+					(entry) => entry.pricing && entry.estimatedCost !== null,
+				);
+			const actualModel = snapshots.at(-1);
 			recordChildInvocation({
 				db: openDatabase(),
 				parentSessionId: options.accountingSessionId,
@@ -1118,14 +1137,31 @@ export class PiSubagentRunner implements SubagentRunner {
 								? "empty"
 								: "failed",
 				messages,
+				usageSnapshots: snapshots,
+				pricingSnapshot:
+					snapshots.length > 0
+						? snapshots.map((entry) => ({
+								provider: entry.provider,
+								model: entry.model,
+								pricing: entry.pricing,
+							}))
+						: null,
+				estimatedCost: fullyPriced
+					? snapshots.reduce(
+							(sum, entry) => sum + (entry.estimatedCost ?? 0),
+							0,
+						)
+					: null,
 				providerId:
-					typeof options.model === "string"
+					actualModel?.provider ??
+					(typeof options.model === "string"
 						? options.model.split("/")[0]
-						: null,
+						: null),
 				modelId:
-					typeof options.model === "string"
+					actualModel?.model ??
+					(typeof options.model === "string"
 						? options.model.split("/").slice(1).join("/")
-						: null,
+						: null),
 				error: result.ok ? null : result.error,
 				parentInvocationId: options.accountingParentInvocationId ?? null,
 			});
@@ -1297,6 +1333,9 @@ export class PiSubagentRunner implements SubagentRunner {
 						env: {
 							...process.env,
 							[MAGIC_CONTEXT_PI_SUBAGENT_ENV]: "1",
+							...(this.harness === "omp" && options.accountingSessionId
+								? { [SUBAGENT_USAGE_SNAPSHOT_ENV]: usageSnapshotPath }
+								: {}),
 							...(options.temperature !== undefined
 								? {
 										MAGIC_CONTEXT_HISTORIAN_TEMPERATURE: String(

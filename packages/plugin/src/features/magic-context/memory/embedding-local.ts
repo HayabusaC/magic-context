@@ -6,6 +6,7 @@ import { DEFAULT_LOCAL_EMBEDDING_MODEL } from "../../../config/schema/magic-cont
 import { getMagicContextStorageDir } from "../../../shared/data-path";
 import { log } from "../../../shared/logger";
 import { shouldEnforcePrivateStoragePermissions } from "../../../shared/storage-permissions";
+import { recordEmbeddingUsage } from "../storage-embedding-usage";
 import { classifyLocalEmbeddingFailure, type EmbeddingFailure } from "./embedding-failure";
 import { getEmbeddingProviderIdentity } from "./embedding-identity";
 import type { EmbeddingProvider, EmbeddingPurpose } from "./embedding-provider";
@@ -1007,6 +1008,8 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
         if (this.disposing) return null;
 
         this.inFlight += 1;
+        let inferenceRequested = false;
+        let dimensions: number | null = null;
 
         try {
             if (!(await this.initialize())) {
@@ -1018,6 +1021,7 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
                 return null;
             }
 
+            inferenceRequested = true;
             const result = await withQuietConsole(() =>
                 pipeline(text, {
                     pooling: "mean",
@@ -1026,6 +1030,7 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
             );
 
             const embedding = extractBatchEmbeddings(result, 1)[0] ?? null;
+            dimensions = embedding?.length ?? null;
             if (!embedding) {
                 this.lastFailureReason = classifyLocalEmbeddingFailure(
                     new Error("local embedding pipeline returned no vector"),
@@ -1044,6 +1049,15 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
             );
             return null;
         } finally {
+            if (inferenceRequested)
+                recordEmbeddingUsage({
+                    providerId: "local",
+                    modelId: this.modelId,
+                    inputTokens: null,
+                    dimensions,
+                    pricePerMillionInputTokens: 0,
+                    local: true,
+                });
             this.finishInFlight();
         }
     }
@@ -1067,6 +1081,8 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
         }
 
         this.inFlight += 1;
+        let inferenceRequested = false;
+        let dimensions: number | null = null;
 
         try {
             if (!(await this.initialize())) {
@@ -1078,6 +1094,7 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
                 return Array.from({ length: texts.length }, () => null);
             }
 
+            inferenceRequested = true;
             const result = await withQuietConsole(() =>
                 pipeline(texts, {
                     pooling: "mean",
@@ -1086,6 +1103,7 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
             );
 
             const embeddings = extractBatchEmbeddings(result, texts.length);
+            dimensions = embeddings.find((embedding) => embedding !== null)?.length ?? null;
             if (embeddings.every((embedding) => embedding === null)) {
                 this.lastFailureReason = classifyLocalEmbeddingFailure(
                     new Error("local embedding pipeline returned no vectors"),
@@ -1104,6 +1122,15 @@ export class LocalEmbeddingProvider implements EmbeddingProvider {
             );
             return Array.from({ length: texts.length }, () => null);
         } finally {
+            if (inferenceRequested)
+                recordEmbeddingUsage({
+                    providerId: "local",
+                    modelId: this.modelId,
+                    inputTokens: null,
+                    dimensions,
+                    pricePerMillionInputTokens: 0,
+                    local: true,
+                });
             this.finishInFlight();
         }
     }

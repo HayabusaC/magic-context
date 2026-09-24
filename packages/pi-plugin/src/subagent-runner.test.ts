@@ -35,6 +35,7 @@ import type { SubagentRunOptions } from "@magic-context/core/shared/subagent-run
 
 import { __setPiHarnessKindForTesting } from "./pi-harness-kind";
 import { __test, PiSubagentRunner } from "./subagent-runner";
+import { SUBAGENT_USAGE_SNAPSHOT_ENV } from "./subagent-usage-pricing";
 
 const baseOptions: SubagentRunOptions = {
 	agent: "historian",
@@ -1264,7 +1265,7 @@ describe("PiSubagentRunner spawn lifecycle", () => {
 	it("records OMP message_end usage in subagent_invocations", async () => {
 		__setPiHarnessKindForTesting("omp");
 		const child = createMockChild();
-		const { runner } = runnerWith(child, {
+		const { runner, spawnImpl } = runnerWith(child, {
 			invocation: { command: "omp", prefixArgs: [], targetHarness: "omp" },
 		});
 		const testDataDir = mkdtempSync(join(tmpdir(), "mc-pi-accounting-"));
@@ -1280,6 +1281,47 @@ describe("PiSubagentRunner spawn lifecycle", () => {
 				accountingSessionId: "omp-accounting-session",
 				accountingSubagent: "historian",
 			});
+			const spawnOptions = (spawnImpl.mock.calls as unknown[][])[0]?.[2] as {
+				env: NodeJS.ProcessEnv;
+			};
+			const snapshotPath = spawnOptions.env[SUBAGENT_USAGE_SNAPSHOT_ENV];
+			if (!snapshotPath)
+				throw new Error("OMP child did not receive a usage snapshot path");
+			writeFileSync(
+				snapshotPath,
+				`${[
+					{
+						provider: "anthropic",
+						model: "claude-sonnet",
+						usage: {
+							input: 1200,
+							output: 80,
+							cacheRead: 300,
+							cacheWrite: 20,
+							totalTokens: 1600,
+							reasoningTokens: 10,
+						},
+						pricing: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1.2 },
+						estimatedCost: 0.0014,
+					},
+					{
+						provider: "anthropic",
+						model: "claude-sonnet",
+						usage: {
+							input: 400,
+							output: 30,
+							cacheRead: 100,
+							cacheWrite: 5,
+							totalTokens: 535,
+							reasoningTokens: 4,
+						},
+						pricing: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1.2 },
+						estimatedCost: 0.0005,
+					},
+				]
+					.map((entry) => JSON.stringify(entry))
+					.join("\n")}\n`,
+			);
 			child.writeStdoutLine({
 				// Captured OMP 18.1.11 shape: usage lives on each assistant
 				// message_end message, including intermediate tool turns.
@@ -1332,6 +1374,22 @@ describe("PiSubagentRunner spawn lifecycle", () => {
 				cacheReadTokens: 400,
 				cacheWriteTokens: 25,
 			});
+			const stored = db
+				.prepare(
+					"SELECT component, reasoning_tokens, total_tokens, pricing_snapshot, estimated_cost FROM subagent_invocations WHERE id=?",
+				)
+				.get(row.id) as {
+				component: string;
+				reasoning_tokens: number;
+				total_tokens: number;
+				pricing_snapshot: string;
+				estimated_cost: number;
+			};
+			expect(stored.component).toBe("historian");
+			expect(stored.reasoning_tokens).toBe(14);
+			expect(stored.total_tokens).toBe(2135);
+			expect(stored.estimated_cost).toBeCloseTo(0.0019);
+			expect(JSON.parse(stored.pricing_snapshot)).toHaveLength(2);
 		} finally {
 			closeDatabase();
 			if (previousTestDataDir === undefined)
@@ -1339,7 +1397,16 @@ describe("PiSubagentRunner spawn lifecycle", () => {
 			else process.env.MAGIC_CONTEXT_TEST_DATA_DIR = previousTestDataDir;
 			if (previousXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
 			else process.env.XDG_DATA_HOME = previousXdgDataHome;
-			rmSync(testDataDir, { recursive: true, force: true });
+			try {
+				rmSync(testDataDir, {
+					recursive: true,
+					force: true,
+					maxRetries: 5,
+					retryDelay: 50,
+				});
+			} catch {
+				// Windows may keep the just-closed SQLite directory busy until process exit.
+			}
 		}
 	});
 

@@ -787,5 +787,26 @@ describe("MagicContextConfigSchema", () => {
                 }),
             ).toThrow();
         });
+        it("keeps an explicit remote embedding price and rejects negative prices", () => {
+            const config = MagicContextConfigSchema.parse({
+                embedding: {
+                    provider: "openai-compatible",
+                    endpoint: "https://example.com/v1",
+                    model: "embedding-a",
+                    price_per_million_input_tokens: 0.25,
+                },
+            });
+            expect(config.embedding.price_per_million_input_tokens).toBe(0.25);
+            expect(() =>
+                MagicContextConfigSchema.parse({
+                    embedding: {
+                        provider: "openai-compatible",
+                        endpoint: "https://example.com/v1",
+                        model: "embedding-a",
+                        price_per_million_input_tokens: -1,
+                    },
+                }),
+            ).toThrow();
+        });
     });
 });

@@ -31,6 +31,44 @@ function dbWithTable(): Database {
 }
 
 describe("subagent invocation storage", () => {
+    test("persists the cost and registry price card captured at invocation time", () => {
+        const db = dbWithTable();
+        db.exec(`ALTER TABLE subagent_invocations ADD COLUMN component TEXT;
+            ALTER TABLE subagent_invocations ADD COLUMN reasoning_tokens INTEGER;
+            ALTER TABLE subagent_invocations ADD COLUMN total_tokens INTEGER;
+            ALTER TABLE subagent_invocations ADD COLUMN pricing_snapshot TEXT;
+            ALTER TABLE subagent_invocations ADD COLUMN estimated_cost REAL;`);
+        const id = recordSubagentInvocation(db, {
+            sessionId: "ses",
+            harness: "pi",
+            subagent: "dreamer",
+            component: "dreamer",
+            task: "verify",
+            startedAt: 1,
+            endedAt: 2,
+            status: "completed",
+            inputTokens: 100,
+            outputTokens: 20,
+            cacheReadTokens: 5,
+            cacheWriteTokens: 0,
+            reasoningTokens: 8,
+            totalTokens: 125,
+            pricingSnapshot: [{ provider: "custom", model: "m", pricing: { input: 1 } }],
+            estimatedCost: 0.0004,
+        });
+        const row = db.prepare("SELECT * FROM subagent_invocations WHERE id=?").get(id) as {
+            component: string;
+            reasoning_tokens: number;
+            total_tokens: number;
+            pricing_snapshot: string;
+            estimated_cost: number;
+        };
+        expect(row.component).toBe("dreamer");
+        expect(row.reasoning_tokens).toBe(8);
+        expect(row.total_tokens).toBe(125);
+        expect(JSON.parse(row.pricing_snapshot)[0].pricing.input).toBe(1);
+        expect(row.estimated_cost).toBe(0.0004);
+    });
     test("records, reads, and totals invocations", () => {
         const db = dbWithTable();
         const parent = recordSubagentInvocation(db, {

@@ -25,6 +25,11 @@ export interface SubagentInvocationInput {
     outputTokens: number;
     cacheReadTokens: number;
     cacheWriteTokens: number;
+    component?: "historian" | "dreamer" | null;
+    reasoningTokens?: number | null;
+    totalTokens?: number | null;
+    pricingSnapshot?: unknown | null;
+    estimatedCost?: number | null;
     error?: string | null;
     parentInvocationId?: number | null;
 }
@@ -127,7 +132,24 @@ export function recordSubagentInvocation(db: Database, input: SubagentInvocation
             input.error ?? null,
             input.parentInvocationId ?? null,
         );
-    return Number(result.lastInsertRowid);
+    const id = Number(result.lastInsertRowid);
+    // The old columns remain sufficient for databases and test fixtures that
+    // have not applied the new migration yet.
+    const columns = db.prepare("PRAGMA table_info(subagent_invocations)").all() as Array<{
+        name: string;
+    }>;
+    if (columns.some((column) => column.name === "estimated_cost")) {
+        db.prepare(`UPDATE subagent_invocations SET component=?, reasoning_tokens=?, total_tokens=?,
+            pricing_snapshot=?, estimated_cost=? WHERE id=?`).run(
+            input.component ?? null,
+            input.reasoningTokens ?? null,
+            input.totalTokens ?? null,
+            input.pricingSnapshot == null ? null : JSON.stringify(input.pricingSnapshot),
+            input.estimatedCost ?? null,
+            id,
+        );
+    }
+    return id;
 }
 
 /**

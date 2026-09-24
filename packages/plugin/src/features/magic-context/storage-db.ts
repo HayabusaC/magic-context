@@ -104,7 +104,7 @@ export function __resetSchemaFenceStateForTests(): void {
     lastMigrationOnOpenRefusal = null;
 }
 
-export const LATEST_SUPPORTED_VERSION = 90;
+export const LATEST_SUPPORTED_VERSION = 91;
 
 /**
  * Every runtime backend receives the same finite wait before the first schema
@@ -2363,6 +2363,11 @@ function healWedgedChannel2Claims(db: Database): void {
  * startup warning + skips the runtime; Pi plugin: logs warning + skips the
  * extension). There is NEVER a silent in-memory fallback.
  */
+/** Return the active context store without starting a new one for telemetry. */
+export function getOpenDatabase(): Database | null {
+    return databases.get(resolveDatabasePath().dbPath) ?? null;
+}
+
 export function openDatabase(): Database | null;
 export function openDatabase(dbPath: string): Database | null;
 export function openDatabase(options: OpenDatabaseOptions): Database | null;

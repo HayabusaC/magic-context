@@ -16,6 +16,15 @@ describe("provider modelId matches canonical identity (write/read must agree)", 
             config: { provider: "openai-compatible", endpoint: "http://h/v1", model: "m" },
         },
         {
+            name: "pricing does not change embedding identity",
+            config: {
+                provider: "openai-compatible",
+                endpoint: "http://h/v1",
+                model: "m",
+                price_per_million_input_tokens: 0.25,
+            },
+        },
+        {
             name: "with api_key + input_type",
             config: {
                 provider: "openai-compatible",

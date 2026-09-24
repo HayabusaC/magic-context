@@ -679,6 +679,14 @@ const BaseEmbeddingConfigSchema = z
             .optional()
             .describe("API endpoint URL. Required when provider is openai-compatible."),
         api_key: z.string().optional().describe("API key for remote embedding provider (optional)"),
+        price_per_million_input_tokens: z
+            .number()
+            .finite()
+            .nonnegative()
+            .optional()
+            .describe(
+                "Optional USD price per 1M input tokens for remote embedding. Used only for Magic Context Estimated Cost.",
+            ),
         input_type: z
             .string()
             .optional()
@@ -788,6 +796,9 @@ export const EmbeddingConfigSchema = BaseEmbeddingConfigSchema.transform((data) 
                 : {}),
             ...(truncate ? { truncate } : {}),
             ...(data.max_input_tokens ? { max_input_tokens: data.max_input_tokens } : {}),
+            ...(data.price_per_million_input_tokens !== undefined
+                ? { price_per_million_input_tokens: data.price_per_million_input_tokens }
+                : {}),
         };
     }
 
@@ -827,6 +838,9 @@ export const EmbeddingConfigSchema = BaseEmbeddingConfigSchema.transform((data) 
                 : {}),
             ...(truncate ? { truncate } : {}),
             ...(data.max_input_tokens ? { max_input_tokens: data.max_input_tokens } : {}),
+            ...(data.price_per_million_input_tokens !== undefined
+                ? { price_per_million_input_tokens: data.price_per_million_input_tokens }
+                : {}),
         };
     }
 

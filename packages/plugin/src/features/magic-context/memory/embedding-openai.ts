@@ -1,5 +1,6 @@
 import { log } from "../../../shared/logger";
 import { sanitizeDiagnosticText } from "../../../shared/redaction";
+import { recordEmbeddingUsage } from "../storage-embedding-usage";
 import type { EmbeddingFailure, EmbeddingFailureClass } from "./embedding-failure";
 import { getEmbeddingProviderIdentity } from "./embedding-identity";
 import { embeddingModelsMatch, resolveEmbeddingTextPrefixes } from "./embedding-model-match";
@@ -22,9 +23,11 @@ interface OpenAICompatibleEmbeddingProviderOptions {
     truncate?: string;
     /** Maximum safe input tokens for chunk embeddings. */
     maxInputTokens?: number;
+    pricePerMillionInputTokens?: number;
 }
 
 interface EmbeddingResponseBody {
+    usage?: { prompt_tokens?: number; input_tokens?: number };
     data?: Array<{
         embedding?: number[];
     }>;
@@ -84,6 +87,8 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
     private readonly queryPrefix: string;
     private readonly documentPrefix: string;
     private readonly truncate: string;
+    private readonly pricePerMillionInputTokens: number | null;
+    private readonly usageProviderId: string;
     private initialized = false;
 
     // Circuit breaker state (per provider instance — resets when config
@@ -115,6 +120,12 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
         this.queryPrefix = prefixes.queryPrefix;
         this.documentPrefix = prefixes.documentPrefix;
         this.truncate = options.truncate?.trim() ?? "";
+        this.pricePerMillionInputTokens = options.pricePerMillionInputTokens ?? null;
+        try {
+            this.usageProviderId = `openai-compatible:${new URL(this.endpoint).host}`;
+        } catch {
+            this.usageProviderId = "openai-compatible";
+        }
         this.maxInputTokens =
             typeof options.maxInputTokens === "number" && Number.isFinite(options.maxInputTokens)
                 ? Math.max(1, Math.floor(options.maxInputTokens))
@@ -223,6 +234,9 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
         let internalController: AbortController | undefined;
         let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
         let onOuterAbort: (() => void) | undefined;
+        let requested = false;
+        let inputTokens: number | null = null;
+        let dimensions: number | null = null;
 
         try {
             const claim = this.claimProbeOrShortCircuit();
@@ -242,6 +256,7 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
             }
 
             const inputTypeForRequest = this.resolveInputTypeForPurpose(purpose);
+            requested = true;
             const response = await fetch(`${this.endpoint}/embeddings`, {
                 method: "POST",
                 headers: {
@@ -309,6 +324,14 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
                 this.recordFailure(isProbe, failure);
                 return Array.from({ length: texts.length }, () => null);
             }
+            const reportedInput = body.usage?.prompt_tokens ?? body.usage?.input_tokens;
+            if (
+                typeof reportedInput === "number" &&
+                Number.isFinite(reportedInput) &&
+                reportedInput >= 0
+            ) {
+                inputTokens = reportedInput;
+            }
             // Model-substitution guard. A local server (LMStudio/Ollama) can
             // return HTTP 200 with a DIFFERENT model's vectors when the
             // requested model isn't the one currently loaded — e.g. a shared
@@ -363,6 +386,7 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
                 const embedding = items[index]?.embedding;
                 return Array.isArray(embedding) ? Float32Array.from(embedding) : null;
             });
+            dimensions = results.find((result) => result !== null)?.length ?? null;
 
             // A response with no usable vectors is still a failure — the
             // endpoint is up but not actually embedding.
@@ -418,6 +442,15 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
             }
             return Array.from({ length: texts.length }, () => null);
         } finally {
+            if (requested)
+                recordEmbeddingUsage({
+                    providerId: this.usageProviderId,
+                    modelId: this.model,
+                    inputTokens,
+                    dimensions,
+                    pricePerMillionInputTokens: this.pricePerMillionInputTokens,
+                    local: false,
+                });
             if (timeoutHandle !== undefined) {
                 clearTimeout(timeoutHandle);
             }

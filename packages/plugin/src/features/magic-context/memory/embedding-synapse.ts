@@ -3,6 +3,7 @@ import { connectionFileExists, SubcCallError, SubcClient } from "@cortexkit/subc
 import { estimateTokens } from "../../../hooks/magic-context/read-session-formatting";
 import { getHarness } from "../../../shared/harness";
 import { log } from "../../../shared/logger";
+import { recordEmbeddingUsage } from "../storage-embedding-usage";
 import type { EmbeddingFailure } from "./embedding-failure";
 import type { EmbeddingProvider, EmbeddingPurpose } from "./embedding-provider";
 
@@ -838,8 +839,11 @@ export class SynapseEmbeddingProvider implements EmbeddingProvider {
     ): Promise<Float32Array | null> {
         if (!(await this.initialize()) || signal?.aborted || !this.metadata) return null;
         if (estimateTokens(text) > this.metadata.max_tokens) return null;
+        let requested = false;
+        let dimensions: number | null = null;
         try {
             const id = "query";
+            requested = true;
             const value = await this.callWithRetry(
                 "embed.query",
                 this.requestConstraints({
@@ -853,6 +857,7 @@ export class SynapseEmbeddingProvider implements EmbeddingProvider {
                 signal,
             );
             const extracted = extractVector(value);
+            dimensions = extracted?.vector.length ?? null;
             if (!extracted) {
                 throw new SynapseEmbeddingError(
                     "schema_violation",
@@ -873,6 +878,16 @@ export class SynapseEmbeddingProvider implements EmbeddingProvider {
         } catch (error) {
             this.logCallFailure(error, "embed.query");
             return null;
+        } finally {
+            if (requested)
+                recordEmbeddingUsage({
+                    providerId: "synapse",
+                    modelId: this.modelId,
+                    inputTokens: null,
+                    dimensions,
+                    pricePerMillionInputTokens: 0,
+                    local: true,
+                });
         }
     }
 
@@ -908,12 +923,15 @@ export class SynapseEmbeddingProvider implements EmbeddingProvider {
             if (signal?.aborted || this.permanentFailure) break;
             const page = this.nextPage(eligibleItems, start);
             start += page.length;
+            let requested = false;
+            let pageDimensions: number | null = null;
             try {
                 const requestKey = this.requestKey(page, purpose);
                 let body: unknown = {};
                 let restarted = false;
                 for (;;) {
                     try {
+                        requested = true;
                         body = await this.callWithRetry(
                             "embed.batch",
                             this.batchRequest(page, requestKey, purpose),
@@ -958,6 +976,7 @@ export class SynapseEmbeddingProvider implements EmbeddingProvider {
                     }
                     const rowMetadata = validateWireRow(item, disclosures[index] ?? null, expected);
                     const vectorArray = Float32Array.from(vector);
+                    pageDimensions ??= vectorArray.length;
                     this.validateResponse({ ...batchEnvelope, ...item }, vectorArray.length);
                     embeddingRowMetadata.set(vectorArray, rowMetadata);
                     output.set(id, vectorArray);
@@ -977,6 +996,16 @@ export class SynapseEmbeddingProvider implements EmbeddingProvider {
                     this.initialized = false;
                     break;
                 }
+            } finally {
+                if (requested)
+                    recordEmbeddingUsage({
+                        providerId: "synapse",
+                        modelId: this.modelId,
+                        inputTokens: null,
+                        dimensions: pageDimensions,
+                        pricePerMillionInputTokens: 0,
+                        local: true,
+                    });
             }
         }
         return output;
