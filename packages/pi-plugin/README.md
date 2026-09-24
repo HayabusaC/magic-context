@@ -67,6 +67,21 @@ omp config set compaction.enabled false
 omp config set memory.backend off
 ```
 
+The GitHub fork also has an `omp-plugin` branch containing a built, installable
+package. OMP manages it as a Git dependency, so it does not need a local clone
+or an npm publication. If the npm version is already installed, remove it once
+before switching sources:
+
+```bash
+omp plugin uninstall @cortexkit/pi-magic-context
+omp plugin install github:HayabusaC/magic-context#omp-plugin
+omp plugin list
+```
+
+To refresh the Git package after the branch is updated, run
+`omp plugin install github:HayabusaC/magic-context#omp-plugin --force`.
+The branch is rebuilt from `master` by the OMP Git package workflow.
+
 Verify with:
 
 ```bash
