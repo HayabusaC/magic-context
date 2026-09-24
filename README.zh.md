@@ -113,6 +113,30 @@ npx @cortexkit/magic-context@latest setup
 
 **Pi:** `npx @cortexkit/magic-context@latest setup --harness pi`（需要 Pi `>= 0.74.0`）。Pi 扩展与 OpenCode 共享同一个数据库，项目记忆和嵌入会在两者之间汇集。
 
+### 从 GitHub 直接安装此 fork 的 OMP 插件
+
+此 fork 在 `master` 更新后会自动将编译好的插件发布到 [`omp-plugin` 分支](https://github.com/HayabusaC/magic-context/tree/omp-plugin)。OMP 会将它作为 Git 依赖管理，无需发布 Magic Context 的 npm 包，也无需保留本机开发目录。如果已经从 npm 安装了 `@cortexkit/pi-magic-context`，切换来源前先执行一次 `omp plugin uninstall @cortexkit/pi-magic-context`。
+
+```bash
+omp plugin install github:HayabusaC/magic-context#omp-plugin
+omp plugin list
+omp plugin doctor
+```
+
+通过 OMP 包管理器更新：
+
+```bash
+omp plugin install github:HayabusaC/magic-context#omp-plugin --force
+```
+
+卸载时运行：
+
+```bash
+omp plugin uninstall @cortexkit/pi-magic-context
+```
+
+Git 和 npm 来源使用相同的插件名称；安装过程仍会从包仓库下载依赖，但 Magic Context 插件本身来自 GitHub。
+
 **故障排查：** `npx @cortexkit/magic-context@latest doctor` 会自动检测你的 harness，检查冲突（压缩、OMO hooks、DCP），验证插件和 TUI 侧边栏，对数据库运行完整性检查，并尽力修复。添加 `--issue` 可生成可直接提交的 bug 报告。
 
 无论是全新项目还是长期运行的项目，工作方式都相同：安装，重启 harness，然后 Magic Context 从那一刻开始捕获上下文。它不会回填安装之前的 OpenCode 或 Pi 会话。

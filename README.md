@@ -171,6 +171,30 @@ User-level config is `~/.config/cortexkit/magic-context.jsonc` on macOS/Linux an
 
 **Oh My Pi (OMP):** `npx @cortexkit/magic-context@latest setup --harness omp` (requires OMP `>= 17.1.7`). Setup installs the Pi-compatible extension through `omp plugin`, disables OMP native compaction and automatic memory, and honors OMP profiles, `PI_CODING_AGENT_DIR`, and initialized XDG layouts.
 
+#### Install this fork in OMP directly from GitHub
+
+This fork publishes a built plugin to its [`omp-plugin` branch](https://github.com/HayabusaC/magic-context/tree/omp-plugin) whenever `master` changes. OMP tracks it as a Git dependency, so the plugin does not need an npm release or a persistent local clone. If `@cortexkit/pi-magic-context` is already installed from npm, uninstall it once before switching sources.
+
+```bash
+omp plugin install github:HayabusaC/magic-context#omp-plugin
+omp plugin list
+omp plugin doctor
+```
+
+Update the Git-installed plugin through OMP's package manager:
+
+```bash
+omp plugin install github:HayabusaC/magic-context#omp-plugin --force
+```
+
+Uninstall it with:
+
+```bash
+omp plugin uninstall @cortexkit/pi-magic-context
+```
+
+The uninstall command also applies to the npm version because both sources use the same plugin name. Installation still downloads the plugin's dependencies from their package registries; Magic Context itself comes from GitHub.
+
 **Troubleshooting:** `npx @cortexkit/magic-context@latest doctor` auto-detects your harnesses, checks host-specific conflicts, verifies plugin registration and database integrity, and fixes what it can. Add `--issue` to file a ready-to-submit bug report.
 
 Works the same on a brand-new or a long-running project: install, restart the harness, and Magic Context captures context from that point forward. It does not backfill OpenCode, Pi, or OMP sessions from before it was installed.
